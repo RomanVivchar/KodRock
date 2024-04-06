@@ -46,7 +46,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Почта: ❌\n")
     return LAST_NAME
 
-
+# something
 async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
