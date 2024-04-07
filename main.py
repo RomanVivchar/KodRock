@@ -140,10 +140,28 @@ async def end_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text="Здесь должна быть информация о боте")
+async def start(update, context):
+    user = update.message.from_user
+    welcome_message = f"Привет, {name1}! Добро пожаловать в нашего телеграм бота. Я готов помочь тебе с любыми вопросами."
+    await update.message.reply_text(welcome_message, reply_markup=await main_menu())
 
+async def main_menu():
+    keyboard = [
+        [types.InlineKeyboardButton("Задать вопрос", callback_data='ask_question')],
+        [types.InlineKeyboardButton("Ответить на вопрос", callback_data='answer_question')]
+    ]
+    return types.InlineKeyboardMarkup(keyboard)
+
+@bot.callback_query_handler(func=lambda call: True)
+async def button(update, context):
+    query = update.callback_query
+    await query.answer()
+    if query.data == 'ask_question':
+        await query.edit_message_text(text="Ты выбрал вариант 'Задать вопрос'")
+    elif query.data == 'answer_question':
+        await query.edit_message_text(text="Ты выбрал вариант 'Ответить на вопрос'")
 
 def main() -> None:
     app = ApplicationBuilder().token("7188985096:AAFn7ijrux_O4JAEkJQWeAk3J8V8fg_wJrk").build()
