@@ -1,7 +1,8 @@
 import re
-import sqlite3
+import psycopg2
 import requests
 import telegram
+from db import Database
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
     ApplicationBuilder,
@@ -18,32 +19,28 @@ filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBU
 
 (NAME, LAST_NAME, PATRONYMIC, PHONE_NUMBER, MAIL, CONFIRMATION,
  START_ROUTES, CREATION_ACCOUNT, END_CONV, END, ASK_QUESTION, VIEW_QUESTIONS, USER_QUESTION) = range(13)
-name1, last_name1, patronymic1, phone1, mail1 = range(5)
 
-# conn = sqlite3.connect('C:/Users/Redmi/PycharmProjects/pythonTgBot/data/data.db')
-# cur = conn.cursor()
+
+db = Database("project", "bot", "bot123", "194.87.239.80", "5432")
+
 
 bot = Bot(token="7188985096:AAFn7ijrux_O4JAEkJQWeAk3J8V8fg_wJrk")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    # cur.execute("SELECT name FROM users WHERE telegram_id = ?",
-    #             (str(chat_id),))
-    # row = cur.fetchone()
-    # name = row if row else None
-    # context.args = ['']
-    # context.user_data['command'] = 'info'
-    # if name is not None:
-    #     await CommandHandler('info', info).callback(update, context.bot)
-    # else:
-    await update.message.reply_text(
-        "Привет, для начала работы давайте создадим вам аккаунт! Вы должны ввести следующие данные (Вводите по "
-        "порядку по одному сообщению):\n\n"
-        "Фамилия: ❌\n"
-        "Имя: ❌\n"
-        "Отчество: ❌\n"
-        "Телефон: ❌\n"
-        "Почта: ❌\n")
+    if db.user_exists(chat_id) is not False:
+        await update.message.reply_text(text="Привет! Нажми /info.")
+        return ConversationHandler.END
+    else:
+        chat_id = update.effective_chat.id
+        db.add_user(chat_id)
+        await update.message.reply_text(
+            "Привет, для начала работы давайте создадим вам аккаунт! Вы должны ввести следующие данные (Вводите по "
+            "порядку по одному сообщению):\n\n"
+            "Фамилия: ❌\n"
+            "Имя: ❌\n"
+            "Телефон: ❌\n"
+            "Почта: ❌\n")
     return LAST_NAME
 
 # something
@@ -56,7 +53,6 @@ async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "порядку по одному сообщению):\n\n"
         "Фамилия: ❌\n"
         "Имя: ❌\n"
-        "Отчество: ❌\n"
         "Телефон: ❌\n"
         "Почта: ❌\n")
 
@@ -66,9 +62,8 @@ async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def last_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_name = update.message.text.capitalize()
     await update.message.reply_text(f"Фамилия: ✅ ({last_name})")
-    print(last_name)
-    global last_name1
-    last_name1 = last_name
+    chat_id = update.effective_chat.id
+    db.set_last_name(chat_id, last_name)
 
     return NAME
 
@@ -77,19 +72,8 @@ async def name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     name = update.message.text.capitalize()
     await update.message.reply_text(f"Имя: ✅ ({name})")
-    global name1
-    name1 = name
-
-    return PATRONYMIC
-
-
-async def patronymic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    patronymic = update.message.text.capitalize()
-    await update.message.reply_text(f"Отчество: ✅ ({patronymic})")
-    print(patronymic)
-    global patronymic1
-    patronymic1 = patronymic
-
+    chat_id = update.effective_chat.id
+    db.set_name(chat_id, name)
     return PHONE_NUMBER
 
 
@@ -100,8 +84,8 @@ async def phone_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return PHONE_NUMBER
 
     await update.message.reply_text(f"Телефон: ✅ ({phone})")
-    global phone1
-    phone1 = phone
+    chat_id = update.effective_chat.id
+    db.set_phone(chat_id, phone)
 
     return CONFIRMATION
 
@@ -113,8 +97,8 @@ async def confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CONFIRMATION
 
     await update.message.reply_text(f"Почта: ✅ ({mail})")
-    global mail1
-    mail1 = mail
+    chat_id = update.effective_chat.id
+    db.set_email(chat_id, mail)
 
     keyboard = [[InlineKeyboardButton(text="Подтвердить ✅", callback_data=str(END))],
                 [InlineKeyboardButton(text="Изменить ❌\n(Ввести все данные заново)",
@@ -132,16 +116,10 @@ async def end_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await query.answer()
 
-    # cur.execute("INSERT INTO users (last_name, name, patronymic,"
-    #             "phone, email, telegram_id) VALUES (?, ?, ?, ?, ?, ?)",
-    #             (last_name1, name1, patronymic1, phone1, mail1, chat_id))
-    # conn.commit()
-    await query.edit_message_text(f"{name1}, спасибо за регистрацию! Нажмите /info")
+    await query.edit_message_text("Cпасибо за регистрацию!\nНажмите /info")
 
     return ConversationHandler.END
 
-# async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#     await update.message.reply_text(text="Здесь должна быть информация о боте")
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     keyboard = [
@@ -157,7 +135,6 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return START_ROUTES
 
 
-# @bot.callback_query_handler(func=lambda call: True)
 async def ask_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -185,11 +162,6 @@ def main() -> None:
             LAST_NAME: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND, last_name
-                )
-            ],
-            PATRONYMIC: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND, patronymic
                 )
             ],
             PHONE_NUMBER: [
