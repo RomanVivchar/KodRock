@@ -1,7 +1,8 @@
 import re
-import sqlite3
+import psycopg2
 import requests
 import telegram
+from db import Database
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
     ApplicationBuilder,
@@ -17,11 +18,11 @@ from telegram.warnings import PTBUserWarning
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
 (NAME, LAST_NAME, PATRONYMIC, PHONE_NUMBER, MAIL, CONFIRMATION,
- START_ROUTES, CREATION_ACCOUNT, END_CONV, END) = range(10)
+ START_ROUTES, CREATION_ACCOUNT, END_CONV, END, ASK_QUESTION, VIEW_QUESTIONS, USER_QUESTION) = range(13)
 name1, last_name1, patronymic1, phone1, mail1 = range(5)
 
-# conn = sqlite3.connect('C:/Users/Redmi/PycharmProjects/pythonTgBot/data/data.db')
-# cur = conn.cursor()
+db = Database("project", "bot", "bot123", "5432")
+print(db.user_exists("738826991"))
 
 bot = Bot(token="7188985096:AAFn7ijrux_O4JAEkJQWeAk3J8V8fg_wJrk")
 
@@ -140,10 +141,36 @@ async def end_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-
+# async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     await update.message.reply_text(text="Здесь должна быть информация о боте")
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(text="Здесь должна быть информация о боте")
+    user = update.message.from_user
+    keyboard = [
+        [InlineKeyboardButton("Задать вопрос", callback_data=str(ASK_QUESTION))],
+        [InlineKeyboardButton("Просмотреть все вопросы", callback_data=str(VIEW_QUESTIONS))]
+    ]
+    welcome_message = (f"Привет, {update.effective_user.first_name}!"
+                       f" Добро пожаловать в нашего телеграм бота. Я готов помочь тебе с любыми вопросами.")
 
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(welcome_message, reply_markup=reply_markup)
+    
+    return START_ROUTES
+
+
+# @bot.callback_query_handler(func=lambda call: True)
+async def ask_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(text="Напишите ваш запрос на знание.")
+
+    return USER_QUESTION
+
+async def user_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    await update.message.reply_text(text=f"Вы написали: {text}.")
+
+    return ConversationHandler.END
 
 def main() -> None:
     app = ApplicationBuilder().token("7188985096:AAFn7ijrux_O4JAEkJQWeAk3J8V8fg_wJrk").build()
@@ -183,7 +210,23 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(start_over, pattern="^" + str(CREATION_ACCOUNT) + "$")]
     )
 
+    welcome_message = ConversationHandler(
+        entry_points=[CommandHandler("info", info)],
+        states={
+            START_ROUTES: [
+                CallbackQueryHandler(ask_question_handler, pattern="^" + str(ASK_QUESTION) + "$")
+            ],
+            USER_QUESTION: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, user_question
+                )
+            ],
+        },
+        fallbacks=[]
+    )
+
     app.add_handler(user_registration)
+    app.add_handler(welcome_message)
     app.add_handler(CommandHandler("info", info))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
