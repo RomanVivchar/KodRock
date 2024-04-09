@@ -15,16 +15,16 @@ from telegram.ext import (
 )
 from warnings import filterwarnings
 from telegram.warnings import PTBUserWarning
+
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
 (NAME, LAST_NAME, PATRONYMIC, PHONE_NUMBER, MAIL, CONFIRMATION,
  START_ROUTES, CREATION_ACCOUNT, END_CONV, END, ASK_QUESTION, VIEW_QUESTIONS, USER_QUESTION) = range(13)
 
-
 db = Database("project", "bot", "bot123", "194.87.239.80", "5432")
 
-
 bot = Bot(token="7188985096:AAFn7ijrux_O4JAEkJQWeAk3J8V8fg_wJrk")
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -42,6 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Телефон: ❌\n"
             "Почта: ❌\n")
     return LAST_NAME
+
 
 # something
 async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -120,6 +121,7 @@ async def end_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
+
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     keyboard = [
@@ -131,22 +133,41 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
-    
+
     return START_ROUTES
 
 
 async def ask_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="Напишите ваш запрос на знание.")
+    await query.edit_message_text(text="Напишите ваш запрос на знание!")
 
     return USER_QUESTION
 
+
 async def user_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    await update.message.reply_text(text=f"Вы написали: {text}.")
+    chat_id = update.effective_chat.id
+    db.add_question(chat_id, text)
+    await update.message.reply_text(text=f"Спасибо за ваш вопрос! Укажите #теги вопроса.")
+    tags = update.message.text
+    db.add_tags(chat_id, tags)
+    return ConversationHandler.END
+
+
+async def all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    rows = db.all_questions()[0]
+    question_id, question_text, date = db.all_questions()[0]
+    user_lastname, username = db.get_user(chat_id)[0]
+    await query.edit_message_text(text=f"Вот все запросы на знания:"
+                                       f"\n\n❔ Вопрос: {question_text}\n\n⏰ Время: {date}\n"
+                                       f"👤 Пользователь: {user_lastname} {username}")
 
     return ConversationHandler.END
+
 
 def main() -> None:
     app = ApplicationBuilder().token("7188985096:AAFn7ijrux_O4JAEkJQWeAk3J8V8fg_wJrk").build()
@@ -185,7 +206,8 @@ def main() -> None:
         entry_points=[CommandHandler("info", info)],
         states={
             START_ROUTES: [
-                CallbackQueryHandler(ask_question_handler, pattern="^" + str(ASK_QUESTION) + "$")
+                CallbackQueryHandler(ask_question_handler, pattern="^" + str(ASK_QUESTION) + "$"),
+                CallbackQueryHandler(all_questions, pattern="^" + str(VIEW_QUESTIONS) + "$")
             ],
             USER_QUESTION: [
                 MessageHandler(
@@ -200,6 +222,7 @@ def main() -> None:
     app.add_handler(welcome_message)
     app.add_handler(CommandHandler("info", info))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     main()
