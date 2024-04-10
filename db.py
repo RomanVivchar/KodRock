@@ -46,19 +46,40 @@ class Database:
 
     def add_tags(self, telegram_id: int, tags: str):
         with self.connection:
-            return self.cursor.execute("UPDATE public.question SET tags = (%s) WHERE user_id = (%s)",
+            return self.cursor.execute("UPDATE public.question SET tag = (%s) WHERE user_id = (%s)",
                                        (tags, telegram_id,))
 
     def all_questions(self) -> list[tuple]:
         with self.connection:
-            self.cursor.execute("SELECT question_id, text, date FROM public.question")
+            self.cursor.execute("SELECT question_id, text, date, user_id FROM public.question ORDER BY date DESC")
             rows = self.cursor.fetchall()
 
             return rows
 
+    def get_question(self, question_id: int) -> tuple:
+        with self.connection:
+            self.cursor.execute("SELECT text, date_trunc('minute', date)::TIMESTAMP, user_id "
+                                "FROM question WHERE question_id = (%s)", (question_id,))
+            row = self.cursor.fetchone()
+            return row
+
     def get_user(self, telegram_id: int):
         with self.connection:
             self.cursor.execute("SELECT last_name, name FROM public.user WHERE user_id = (%s)", (telegram_id,))
-            row = self.cursor.fetchall()
+            row = self.cursor.fetchone()
             return row
 
+    def all_answers(self, question_id: int) -> list[tuple]:
+        with self.connection:
+            self.cursor.execute("SELECT answer_id, text, date_trunc('minute', date)::TIMESTAMP, user_id "
+                                "FROM answer "
+                                "WHERE question_id = (%s)"
+                                "ORDER BY date DESC", (question_id,))
+            rows = self.cursor.fetchall()
+
+            return rows
+
+    def add_answer(self, telegram_id: int, answer: str, question_id: int):
+        with self.connection:
+            return self.cursor.execute("INSERT INTO answer (text, user_id, date, question_id) VALUES (%s, %s, %s, %s)",
+                                       (answer, telegram_id, datetime.datetime.now(), question_id))

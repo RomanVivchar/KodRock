@@ -3,7 +3,7 @@ import psycopg2
 import requests
 import telegram
 from db import Database
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram import Update,ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -18,8 +18,10 @@ from telegram.warnings import PTBUserWarning
 
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
-(NAME, LAST_NAME, PATRONYMIC, PHONE_NUMBER, MAIL, CONFIRMATION,
- START_ROUTES, CREATION_ACCOUNT, END_CONV, END, ASK_QUESTION, VIEW_QUESTIONS, USER_QUESTION) = range(13)
+(NAME, LAST_NAME, PHONE_NUMBER, MAIL,
+ CONFIRMATION, START_ROUTES, CREATION_ACCOUNT, END_CONV, END,
+ ASK_QUESTION, VIEW_QUESTIONS, USER_QUESTION, USER_ANSWER, VIEW_ANSWERS,
+ ADD_ANSWER, VIEWING_QUESTION) = map(chr, range(16))
 
 db = Database("project", "bot", "bot123", "194.87.239.80", "5432")
 
@@ -159,14 +161,75 @@ async def all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     chat_id = update.effective_chat.id
-    rows = db.all_questions()[0]
-    question_id, question_text, date = db.all_questions()[0]
-    user_lastname, username = db.get_user(chat_id)[0]
-    await query.edit_message_text(text=f"Вот все запросы на знания:"
-                                       f"\n\n❔ Вопрос: {question_text}\n\n⏰ Время: {date}\n"
-                                       f"👤 Пользователь: {user_lastname} {username}")
+    rows = db.all_questions()
+    await bot.send_message(chat_id=chat_id, text=f"Вот все запросы на знание:")
+    for row in rows:
+        question_id, question_text, date, user_id = row
+        keyboard = [
+            [InlineKeyboardButton(f"Открыть", callback_data=question_id)]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await bot.send_message(chat_id=chat_id,
+                               text=f"❔ Вопрос: {question_text}\n\n",
+                               reply_markup=reply_markup)
+
+    return START_ROUTES
+
+
+async def question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["question"] = int(update.callback_query.data)
+    print(context.user_data["question"], type(context.user_data["question"]))
+    row = db.get_question(context.user_data["question"])
+    question_text, date, user_id = row
+    user_lastname, username = db.get_user(user_id)
+    keyboard = [
+        [InlineKeyboardButton("Ответить на запрос", callback_data=str(ADD_ANSWER))],
+        [InlineKeyboardButton("Просмотреть все ответы", callback_data=str(VIEW_ANSWERS))]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await bot.send_message(chat_id=update.effective_user.id,
+                           text=f"❔ Вопрос: {question_text}\n\n⏰ Время: {date}\n"
+                                f"👤 Пользователь: {user_lastname} {username}",
+                           reply_markup=reply_markup)
+    return START_ROUTES
+
+
+async def user_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await bot.send_message(chat_id=update.effective_user.id, text="Напишите ваш ответ:")
+
+    return USER_ANSWER
+
+async def user_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    question_id = context.user_data["question"]
+    db.add_answer(update.effective_user.id, text, question_id)
+    context.user_data.clear()
 
     return ConversationHandler.END
+
+
+async def view_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    question_id = context.user_data["question"]
+    rows = db.all_answers(question_id)
+    if len(rows) == 0:
+        await bot.send_message(chat_id=update.effective_user.id, text='На этот вопрос пока нет ответов')
+    for row in rows:
+        answer_id, text, date, user_id = row
+        user_lastname, username = db.get_user(user_id)
+        await bot.send_message(chat_id=update.effective_user.id,
+                               text=f"Ответ от: {user_lastname} {username}\n\n"
+                                    f"{text}\n\n"
+                                    f"Дата: {date}")
+    keyboard = [[InlineKeyboardButton(text="↩", callback_data=question_id)]]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await bot.send_message(chat_id=update.effective_user.id, text='Вы можете вернуться назад', reply_markup=reply_markup)
+    context.user_data.clear()
+    return START_ROUTES
 
 
 def main() -> None:
@@ -207,13 +270,21 @@ def main() -> None:
         states={
             START_ROUTES: [
                 CallbackQueryHandler(ask_question_handler, pattern="^" + str(ASK_QUESTION) + "$"),
-                CallbackQueryHandler(all_questions, pattern="^" + str(VIEW_QUESTIONS) + "$")
+                CallbackQueryHandler(all_questions, pattern="^" + str(VIEW_QUESTIONS) + "$"),
+                CallbackQueryHandler(question, pattern="^-?\d+(\.\d+)?$"),
+                CallbackQueryHandler(view_answers, pattern="^" + str(VIEW_ANSWERS) + "$"),
+                CallbackQueryHandler(user_answer_handler, pattern="^" + str(ADD_ANSWER) + "$"),
             ],
             USER_QUESTION: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND, user_question
                 )
             ],
+            USER_ANSWER: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, user_answer
+                )
+            ]
         },
         fallbacks=[]
     )
