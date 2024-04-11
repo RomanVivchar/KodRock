@@ -1,9 +1,9 @@
+import datetime
 import re
 import psycopg2
-import requests
 import telegram
 from db import Database
-from telegram import Update,ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -18,10 +18,11 @@ from telegram.warnings import PTBUserWarning
 
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
-(NAME, LAST_NAME, PHONE_NUMBER, MAIL,
- CONFIRMATION, START_ROUTES, CREATION_ACCOUNT, END_CONV, END,
+(NAME, LAST_NAME, PHONE_NUMBER, MAIL, CONFIRMATION,
+ START_ROUTES, SHOP, CREATION_ACCOUNT, END_CONV, END,
  ASK_QUESTION, VIEW_QUESTIONS, USER_QUESTION, USER_ANSWER, VIEW_ANSWERS,
- ADD_ANSWER, VIEWING_QUESTION) = map(chr, range(16))
+ ADD_ANSWER, VIEWING_QUESTION, BUY_ITEM, BACK, ANSWER,
+ QUESTION, CHANGING_ANSWER, CHANGING_QUESTION) = map(chr, range(23))
 
 db = Database("project", "bot", "bot123", "194.87.239.80", "5432")
 
@@ -151,9 +152,10 @@ async def user_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     chat_id = update.effective_chat.id
     db.add_question(chat_id, text)
-    await update.message.reply_text(text=f"Спасибо за ваш вопрос! Укажите #теги вопроса.")
-    tags = update.message.text
-    db.add_tags(chat_id, tags)
+    await update.message.reply_text(text=f"Спасибо за ваш вопрос! Вам начислено: 1 💎 gems!")
+    db.insert_gems(chat_id, 1)
+    # tags = update.message.text
+    # db.add_tags(chat_id, tags)
     return ConversationHandler.END
 
 
@@ -178,7 +180,6 @@ async def all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["question"] = int(update.callback_query.data)
-    print(context.user_data["question"], type(context.user_data["question"]))
     row = db.get_question(context.user_data["question"])
     question_text, date, user_id = row
     user_lastname, username = db.get_user(user_id)
@@ -201,10 +202,36 @@ async def user_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     return USER_ANSWER
 
+
 async def user_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    chat_id = update.effective_user.id
     question_id = context.user_data["question"]
-    db.add_answer(update.effective_user.id, text, question_id)
+    db.add_answer(chat_id, text, question_id)
+    row = db.check_strike(chat_id)
+    today_answers = row[0]
+    gems = db.get_gems(chat_id)[0]
+    if today_answers in [3, 4, 5]:
+        await update.message.reply_text(text=f"Вау! Ты много знаешь! За сегодня ты ответил на {today_answers} "
+                                             f"запроса на знание! Держи 💎 {today_answers + 2} gems!"
+                                             f"\n\nДля возврата в меню, нажмите /info")
+        db.insert_gems(chat_id, gems, today_answers + 2)
+    elif today_answers in [6, 7, 8, 9]:
+        await update.message.reply_text(text=f"Да ты знаток производства! Молодец! За сегодня ты ответил на "
+                                             f"{today_answers} "
+                                             f"запроса на знание! Держи 💎 {today_answers + 3} gems!"
+                                             f"\n\nДля возврата в меню, нажмите /info")
+        db.insert_gems(chat_id, gems, today_answers + 3)
+    elif today_answers >= 10:
+        await update.message.reply_text(text=f"Магистр знаний!!! К вам всегда можно обратиться с вопросом! "
+                                             f"За сегодня ты ответил на {today_answers} "
+                                             f"запросов на знание! Держи 💎 {today_answers + 5} gems!"
+                                             f"\n\nДля возврата в меню, нажмите /info")
+        db.insert_gems(chat_id, gems, today_answers + 5)
+    else:
+        await update.message.reply_text(text="Спасибо за ваш ответ! Вам начислено: 💎 1 gem!"
+                                             "\n\nДля возврата в меню, нажмите /info")
+        db.insert_gems(chat_id, gems, 1)
     context.user_data.clear()
 
     return ConversationHandler.END
@@ -227,10 +254,149 @@ async def view_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(text="↩", callback_data=question_id)]]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await bot.send_message(chat_id=update.effective_user.id, text='Вы можете вернуться назад', reply_markup=reply_markup)
+    await bot.send_message(chat_id=update.effective_user.id, text='Вы можете вернуться назад',
+                           reply_markup=reply_markup)
     context.user_data.clear()
     return START_ROUTES
 
+
+async def get_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    rows = db.all_users()
+    for row in rows:
+        last_name, name, phone_number, email, count_answers, count_questions = row
+        await bot.send_message(chat_id=update.effective_user.id, text=f"Пользователь:{last_name} {name}\n\n"
+                                                                      f"Количество ответов: {count_answers}\n"
+                                                                      f"Количество запросов на знания: {count_questions}\n\n"
+                                                                      f"Телефон: {phone_number}\n"
+                                                                      f"Почта: {email}")
+
+
+async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    last_name, name, phone_number, email, gems = db.account(chat_id)
+    await update.message.reply_text(text=f"Ваш аккаунт:\n\nФамилия: {last_name}\nИмя: {name}\nТелефон: {phone_number}\n"
+                                         f"Почта: {email}\nБаланс: 💎 {gems} gems")
+
+
+async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    keyboard = [[InlineKeyboardButton(text="1️⃣", callback_data=10)],
+                [InlineKeyboardButton(text="2️⃣", callback_data=25)],
+                [InlineKeyboardButton(text="3️⃣", callback_data=50)],
+                [InlineKeyboardButton(text="4️⃣", callback_data=100)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text=f"Добро пожаловать в магазин! Здесь вы можете приобрести товары, услуги и тд."
+                                         f"за 💎 gems, достаточно нажать на кнопку, и товар ваш!\n\n"
+                                         f"Ваш баланс: 💎 {db.get_gems(chat_id)[0]} gems\n\n"
+                                         f"Товары:\n\n"
+                                         f"1️⃣ Item1 - 10 💎 gems\nDescription1\n\n"
+                                         f"2️⃣ Item2 - 25 💎 gems\nDescription2\n\n"
+                                         f"3️⃣ Item3 - 50 💎 gems\nDescription3\n\n"
+                                         f"4️⃣ Item4 - 100 💎 gems\nDescription2",
+                                    reply_markup=reply_markup)
+
+    return BUY_ITEM
+
+
+async def shop_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    keyboard = [[InlineKeyboardButton(text="1️⃣", callback_data=10)],
+                [InlineKeyboardButton(text="2️⃣", callback_data=25)],
+                [InlineKeyboardButton(text="3️⃣", callback_data=50)],
+                [InlineKeyboardButton(text="4️⃣", callback_data=100)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text=f"Добро пожаловать в магазин! Здесь вы можете приобрести товары, услуги и тд."
+                                       f"за 💎 gems, достаточно нажать на кнопку, и товар ваш!\n\n"
+                                       f"Ваш баланс: 💎 {db.get_gems(chat_id)[0]} gems\n\n"
+                                       f"Товары:\n\n"
+                                       f"1️⃣ Item1 - 10 💎 gems\nDescription1\n\n"
+                                       f"2️⃣ Item2 - 25 💎 gems\nDescription2\n\n"
+                                       f"3️⃣ Item3 - 50 💎 gems\nDescription3\n\n"
+                                       f"4️⃣ Item4 - 100 💎 gems\nDescription2",
+                                  reply_markup=reply_markup)
+
+    return BUY_ITEM
+
+
+async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    # await query.answer()
+    chat_id = update.effective_chat.id
+    gems = db.get_gems(chat_id)[0]
+    keyboard = [[InlineKeyboardButton(text="↩", callback_data=str(SHOP))]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if gems <= int(query.data):
+        await query.edit_message_text(
+            text="❌ Недостаточно средств",
+            reply_markup=reply_markup)
+        return BACK
+    else:
+        db.insert_gems(chat_id, gems, -int(query.data))
+        await bot.send_message(chat_id=update.effective_user.id, text=f"✅ Товар успешно куплен!\n"
+                                                                      f"Ваш баланс: {db.get_gems(chat_id)[0]} 💎 gems")
+
+    return ConversationHandler.END
+
+async def get_my_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    rows = db.my_answers(chat_id)
+    for row in rows:
+        answer_id, text_answer, answer_date, question_id = row
+        text_question, question_date, asker_id = db.get_question(question_id)
+        asker_last_name, asker_name = db.get_user(asker_id)
+        keyboard = [[InlineKeyboardButton(text="✏ Изменить", callback_data=answer_id)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await bot.send_message(chat_id=chat_id, text=f"Вопрос:\n{text_question}\nОт: {asker_last_name} {asker_name}\n"
+                                                     f"Дата: {question_date}\n\nВаш ответ: {text_answer}\n"
+                                                     f"Дата: {answer_date}", reply_markup=reply_markup)
+
+    return CHANGING_ANSWER
+
+
+async def change_my_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["answer_id"] = int(update.callback_query.data)
+    chat_id = update.effective_chat.id
+    await bot.send_message(chat_id=chat_id, text="Напишите ваш ответ")
+    return ANSWER
+
+async def change_my_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    answer_id = context.user_data["answer_id"]
+    db.update_answer(text, answer_id)
+    await update.message.reply_text(text="Изменения сохранены")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def get_my_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    rows = db.my_questions(chat_id)
+    for row in rows:
+        question_id, text, date = row
+        keyboard = [[InlineKeyboardButton(text="✏ Изменить", callback_data=question_id)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await bot.send_message(chat_id=chat_id, text=f"Вопрос:\n{text}\n"
+                                                     f"Дата: {date}\n",
+                               reply_markup=reply_markup)
+
+    return CHANGING_QUESTION
+
+async def change_my_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["question_id"] = int(update.callback_query.data)
+    chat_id = update.effective_chat.id
+    await bot.send_message(chat_id=chat_id, text="Напишите ваш вопрос")
+    return QUESTION
+
+async def change_my_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    question_id = context.user_data["question_id"]
+    db.update_question(text, question_id)
+    await update.message.reply_text(text="Изменения сохранены")
+    context.user_data.clear()
+    return ConversationHandler.END
 
 def main() -> None:
     app = ApplicationBuilder().token("7188985096:AAFn7ijrux_O4JAEkJQWeAk3J8V8fg_wJrk").build()
@@ -289,8 +455,45 @@ def main() -> None:
         fallbacks=[]
     )
 
+    buy_item = ConversationHandler(
+        entry_points=[CommandHandler("shop", shop)],
+        states={
+            BUY_ITEM: [
+                CallbackQueryHandler(buy, pattern="^-?\d+(\.\d+)?$")
+            ],
+            BACK: [
+                CallbackQueryHandler(shop_over, pattern="^" + str(SHOP) + "$")
+            ],
+        },
+        fallbacks=[]
+    )
+
+    changing_answer = ConversationHandler(
+        entry_points=[CommandHandler("myanswers", get_my_answers),
+                      CommandHandler("myquestoins", get_my_questions)],
+        states={
+            CHANGING_ANSWER: [
+                CallbackQueryHandler(change_my_answer_handler, pattern="^-?\d+(\.\d+)?$")
+            ],
+            CHANGING_QUESTION: [
+                CallbackQueryHandler(change_my_question_handler, pattern="^-?\d+(\.\d+)?$")
+            ],
+            ANSWER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, change_my_answer)
+            ],
+            QUESTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, change_my_question)
+            ]
+        },
+        fallbacks=[]
+    )
+
     app.add_handler(user_registration)
     app.add_handler(welcome_message)
+    app.add_handler(buy_item)
+    app.add_handler(changing_answer)
+    app.add_handler(CommandHandler("account", account))
+    app.add_handler(CommandHandler("users", get_all_users))
     app.add_handler(CommandHandler("info", info))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
