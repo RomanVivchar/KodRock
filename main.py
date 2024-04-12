@@ -132,8 +132,10 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Просмотреть все вопросы", callback_data=str(VIEW_QUESTIONS))],
         [InlineKeyboardButton("Поиск вопроса по тегу", callback_data=str(SEARCH))]
     ]
-    welcome_message = (f"Привет, {update.effective_user.first_name}!"
-                       f" Добро пожаловать в нашего телеграм бота. Я готов помочь тебе с любыми вопросами.")
+    welcome_message = (f"Привет, {update.effective_user.first_name}! "
+                       f"Этот бот создан для упрощения процесса нахождения ответов на ваши вопросы. "
+                       f"Здесь Вы можете оставить свой вопрос или просмотреть вопросы других сотрудников, и при "
+                       f"желании ответить на них. ")
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
@@ -585,6 +587,7 @@ async def decision_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return CONTINUE_REVIEW
 
+
 async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     decision = update.callback_query.data
     if decision == 'accept':
@@ -594,6 +597,31 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=user_id, text="your idea request has been declined.")
 
     return ConversationHandler.END
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(text="1) Сотрудники имеют возможность голосовать за лучшие вопросы.\n"
+                                         "(Вопросы отображаются в порядке убывания голосов.)\n\n"
+
+                                         "2) В чат-боте присутствует система тегов, которая позволяет определить "
+                                         "тематику вопроса.\n\n"
+
+                                         "3) Сотрудники имеют возможность находить вопросы по тегам.\n\n"
+
+                                         "4) Сотрудники имеют возможность возвращаться к своим вопросам и "
+                                         "редактировать их.\n\n"
+
+                                         "5) Сотрудники имеют возможность возвращаться к своим ответам на вопросы и "
+                                         "редактировать их.\n\n"
+
+                                         "6) В чат-боте присутствует система вознаграждения за создание своих "
+                                         "вопросов и за ответы на вопросы других сотрудников.\n\n"
+
+                                         "7) В чат-боте есть раздел, где отображаются сотрудники, оставившие вопросы "
+                                         "или ответы, в порядке уменьшения количества их вопросов или ответов."
+                                         "В этом разделе указаны количество вопросов, ответов и контактные данные "
+                                         "этих сотрудников.\n\n"
+                                         "8) Сотрудник может открыть свой аккаунт и просмотреть свои личные данные.")
 
 
 def main() -> None:
@@ -694,7 +722,8 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, change_my_question)
             ]
         },
-        fallbacks=[]
+        fallbacks=[CommandHandler("myanswers", get_my_answers),
+                   CommandHandler("myquestions", get_my_questions)]
     )
 
     admin_panel = ConversationHandler(
@@ -718,6 +747,7 @@ def main() -> None:
     app.add_handler(welcome_message)
     app.add_handler(buy_item)
     app.add_handler(changing_answer)
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("account", account))
     app.add_handler(CommandHandler("users", get_all_users))
     app.add_handler(CommandHandler("info", info))
