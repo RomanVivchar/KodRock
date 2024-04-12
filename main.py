@@ -1,7 +1,4 @@
-import datetime
 import re
-import psycopg2
-import telegram
 from db import Database
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
@@ -22,7 +19,8 @@ filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBU
  START_ROUTES, SHOP, CREATION_ACCOUNT, END_CONV, END,
  ASK_QUESTION, VIEW_QUESTIONS, USER_QUESTION, USER_ANSWER, VIEW_ANSWERS,
  ADD_ANSWER, VIEWING_QUESTION, BUY_ITEM, BACK, ANSWER,
- QUESTION, CHANGING_ANSWER, CHANGING_QUESTION) = map(chr, range(23))
+ QUESTION, CHANGING_ANSWER, CHANGING_QUESTION, TAGS, SEARCH,
+ UPDATE_RATING, BAD_QUESTION, GOOD_QUESTION) = map(chr, range(28))
 
 db = Database("project", "bot", "bot123", "194.87.239.80", "5432")
 
@@ -129,7 +127,8 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     keyboard = [
         [InlineKeyboardButton("Задать вопрос", callback_data=str(ASK_QUESTION))],
-        [InlineKeyboardButton("Просмотреть все вопросы", callback_data=str(VIEW_QUESTIONS))]
+        [InlineKeyboardButton("Просмотреть все вопросы", callback_data=str(VIEW_QUESTIONS))],
+        [InlineKeyboardButton("Поиск вопроса по тегу", callback_data=str(SEARCH))]
     ]
     welcome_message = (f"Привет, {update.effective_user.first_name}!"
                        f" Добро пожаловать в нашего телеграм бота. Я готов помочь тебе с любыми вопросами.")
@@ -140,22 +139,51 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return START_ROUTES
 
 
+async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await bot.send_message(chat_id=query.from_user.id, text="Введите 🏷 #тег")
+    return TAGS
+
+
+async def tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tag = update.message.text
+    rows = db.search_by_tag(tag)
+    if len(rows) == 0:
+        await bot.send_message(update.message.chat_id, text=f"Тег 🏷 {tag} не найден")
+        return TAGS
+    else:
+        for row in rows:
+            question_id, text, date, user_id = row
+            keyboard = [
+                [InlineKeyboardButton(f"Открыть", callback_data=question_id)]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await bot.send_message(chat_id=update.message.chat_id,
+                                   text=f"❔ Вопрос: {text}\n"
+                                        f"🏷 #тег: {tag}",
+                                   reply_markup=reply_markup)
+
+    return START_ROUTES
+
+
 async def ask_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="Напишите ваш запрос на знание!")
+    await bot.send_message(update.effective_user.id,
+                           text="Напишите ваш запрос на знание! После вопроса, через '-' укажите #тег")
 
     return USER_QUESTION
 
 
 async def user_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    question = update.message.text.split("-")
+    text = question[0].strip()
+    tag = question[1].strip()
     chat_id = update.effective_chat.id
-    db.add_question(chat_id, text)
+    db.add_question(chat_id, text, tag)
     await update.message.reply_text(text=f"Спасибо за ваш вопрос! Вам начислено: 1 💎 gems!")
     db.insert_gems(chat_id, 1)
-    # tags = update.message.text
-    # db.add_tags(chat_id, tags)
     return ConversationHandler.END
 
 
@@ -166,13 +194,15 @@ async def all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = db.all_questions()
     await bot.send_message(chat_id=chat_id, text=f"Вот все запросы на знание:")
     for row in rows:
-        question_id, question_text, date, user_id = row
+        tag, question_id, question_text, rating = row
         keyboard = [
             [InlineKeyboardButton(f"Открыть", callback_data=question_id)]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await bot.send_message(chat_id=chat_id,
-                               text=f"❔ Вопрос: {question_text}\n\n",
+                               text=f"❔ Вопрос: {question_text}\n"
+                                    f"🏷 #тег: {tag}\n"
+                                    f"📈 Рейтинг: {rating}",
                                reply_markup=reply_markup)
 
     return START_ROUTES
@@ -180,18 +210,37 @@ async def all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["question"] = int(update.callback_query.data)
+    await update.callback_query.answer()
     row = db.get_question(context.user_data["question"])
-    question_text, date, user_id = row
+    tag, question_text, date, user_id, rating = row
     user_lastname, username = db.get_user(user_id)
     keyboard = [
         [InlineKeyboardButton("Ответить на запрос", callback_data=str(ADD_ANSWER))],
-        [InlineKeyboardButton("Просмотреть все ответы", callback_data=str(VIEW_ANSWERS))]
+        [InlineKeyboardButton("Просмотреть все ответы", callback_data=str(VIEW_ANSWERS))],
+        [InlineKeyboardButton("Плохой вопрос 🔻", callback_data=str(BAD_QUESTION)),
+         InlineKeyboardButton("Хороший вопрос ✅", callback_data=str(GOOD_QUESTION))]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await bot.send_message(chat_id=update.effective_user.id,
-                           text=f"❔ Вопрос: {question_text}\n\n⏰ Время: {date}\n"
+                           text=f"❔ Вопрос: {question_text}\n\n"
+                                f"🏷 #тег: {tag}\n"
+                                f"📈 Рейтинг: {rating}\n"
+                                f"⏰ Время: {date}\n"
                                 f"👤 Пользователь: {user_lastname} {username}",
                            reply_markup=reply_markup)
+    return START_ROUTES
+
+
+async def set_question_rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    vote = 0
+    if query.data == str(BAD_QUESTION):
+        vote = -2
+    keyboard = [[InlineKeyboardButton(text="↩", callback_data=context.user_data["question"])]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    db.set_question_rating(context.user_data["question"], vote)
+    await bot.send_message(chat_id=update.effective_user.id, text="Ваш голос учтен!", reply_markup=reply_markup)
     return START_ROUTES
 
 
@@ -210,28 +259,27 @@ async def user_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.add_answer(chat_id, text, question_id)
     row = db.check_strike(chat_id)
     today_answers = row[0]
-    gems = db.get_gems(chat_id)[0]
     if today_answers in [3, 4, 5]:
         await update.message.reply_text(text=f"Вау! Ты много знаешь! За сегодня ты ответил на {today_answers} "
                                              f"запроса на знание! Держи 💎 {today_answers + 2} gems!"
                                              f"\n\nДля возврата в меню, нажмите /info")
-        db.insert_gems(chat_id, gems, today_answers + 2)
+        db.insert_gems(chat_id, today_answers + 2)
     elif today_answers in [6, 7, 8, 9]:
         await update.message.reply_text(text=f"Да ты знаток производства! Молодец! За сегодня ты ответил на "
                                              f"{today_answers} "
                                              f"запроса на знание! Держи 💎 {today_answers + 3} gems!"
                                              f"\n\nДля возврата в меню, нажмите /info")
-        db.insert_gems(chat_id, gems, today_answers + 3)
+        db.insert_gems(chat_id, today_answers + 3)
     elif today_answers >= 10:
         await update.message.reply_text(text=f"Магистр знаний!!! К вам всегда можно обратиться с вопросом! "
                                              f"За сегодня ты ответил на {today_answers} "
                                              f"запросов на знание! Держи 💎 {today_answers + 5} gems!"
                                              f"\n\nДля возврата в меню, нажмите /info")
-        db.insert_gems(chat_id, gems, today_answers + 5)
+        db.insert_gems(chat_id, today_answers + 5)
     else:
         await update.message.reply_text(text="Спасибо за ваш ответ! Вам начислено: 💎 1 gem!"
                                              "\n\nДля возврата в меню, нажмите /info")
-        db.insert_gems(chat_id, gems, 1)
+        db.insert_gems(chat_id, 1)
     context.user_data.clear()
 
     return ConversationHandler.END
@@ -245,12 +293,12 @@ async def view_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(rows) == 0:
         await bot.send_message(chat_id=update.effective_user.id, text='На этот вопрос пока нет ответов')
     for row in rows:
-        answer_id, text, date, user_id = row
+        answer_id, text, date, user_id, rating = row
         user_lastname, username = db.get_user(user_id)
         await bot.send_message(chat_id=update.effective_user.id,
                                text=f"Ответ от: {user_lastname} {username}\n\n"
                                     f"{text}\n\n"
-                                    f"Дата: {date}")
+                                    f"⏰ Время: {date}\n")
     keyboard = [[InlineKeyboardButton(text="↩", callback_data=question_id)]]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -275,16 +323,20 @@ async def get_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     last_name, name, phone_number, email, gems = db.account(chat_id)
-    await update.message.reply_text(text=f"Ваш аккаунт:\n\nФамилия: {last_name}\nИмя: {name}\nТелефон: {phone_number}\n"
-                                         f"Почта: {email}\nБаланс: 💎 {gems} gems")
+    await update.message.reply_text(text=f"Ваш аккаунт:\n\n"
+                                         f"Фамилия: {last_name}\n"
+                                         f"Имя: {name}\n"
+                                         f"Телефон: {phone_number}\n"
+                                         f"Почта: {email}\n"
+                                         f"Баланс: 💎 {gems} gems")
 
 
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    keyboard = [[InlineKeyboardButton(text="1️⃣", callback_data=10)],
-                [InlineKeyboardButton(text="2️⃣", callback_data=25)],
-                [InlineKeyboardButton(text="3️⃣", callback_data=50)],
-                [InlineKeyboardButton(text="4️⃣", callback_data=100)]]
+    keyboard = [[InlineKeyboardButton(text="1️⃣", callback_data=10),
+                 InlineKeyboardButton(text="2️⃣", callback_data=25),
+                 InlineKeyboardButton(text="3️⃣", callback_data=50),
+                 InlineKeyboardButton(text="4️⃣", callback_data=100)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text=f"Добро пожаловать в магазин! Здесь вы можете приобрести товары, услуги и тд."
                                          f"за 💎 gems, достаточно нажать на кнопку, и товар ваш!\n\n"
@@ -303,10 +355,10 @@ async def shop_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     chat_id = update.effective_chat.id
-    keyboard = [[InlineKeyboardButton(text="1️⃣", callback_data=10)],
-                [InlineKeyboardButton(text="2️⃣", callback_data=25)],
-                [InlineKeyboardButton(text="3️⃣", callback_data=50)],
-                [InlineKeyboardButton(text="4️⃣", callback_data=100)]]
+    keyboard = [[InlineKeyboardButton(text="1️⃣", callback_data=10),
+                 InlineKeyboardButton(text="2️⃣", callback_data=25),
+                 InlineKeyboardButton(text="3️⃣", callback_data=50),
+                 InlineKeyboardButton(text="4️⃣", callback_data=100)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text=f"Добро пожаловать в магазин! Здесь вы можете приобрести товары, услуги и тд."
                                        f"за 💎 gems, достаточно нажать на кнопку, и товар ваш!\n\n"
@@ -340,12 +392,13 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
+
 async def get_my_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     rows = db.my_answers(chat_id)
     for row in rows:
         answer_id, text_answer, answer_date, question_id = row
-        text_question, question_date, asker_id = db.get_question(question_id)
+        tag, text_question, question_date, asker_id, rating = db.get_question(question_id)
         asker_last_name, asker_name = db.get_user(asker_id)
         keyboard = [[InlineKeyboardButton(text="✏ Изменить", callback_data=answer_id)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -362,13 +415,14 @@ async def change_my_answer_handler(update: Update, context: ContextTypes.DEFAULT
     await bot.send_message(chat_id=chat_id, text="Напишите ваш ответ")
     return ANSWER
 
+
 async def change_my_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     answer_id = context.user_data["answer_id"]
     db.update_answer(text, answer_id)
     await update.message.reply_text(text="Изменения сохранены")
     context.user_data.clear()
-    return ConversationHandler.END
+    return CHANGING_ANSWER
 
 
 async def get_my_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -384,11 +438,13 @@ async def get_my_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return CHANGING_QUESTION
 
+
 async def change_my_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["question_id"] = int(update.callback_query.data)
     chat_id = update.effective_chat.id
     await bot.send_message(chat_id=chat_id, text="Напишите ваш вопрос")
     return QUESTION
+
 
 async def change_my_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -397,6 +453,7 @@ async def change_my_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(text="Изменения сохранены")
     context.user_data.clear()
     return ConversationHandler.END
+
 
 def main() -> None:
     app = ApplicationBuilder().token("7188985096:AAFn7ijrux_O4JAEkJQWeAk3J8V8fg_wJrk").build()
@@ -440,6 +497,9 @@ def main() -> None:
                 CallbackQueryHandler(question, pattern="^-?\d+(\.\d+)?$"),
                 CallbackQueryHandler(view_answers, pattern="^" + str(VIEW_ANSWERS) + "$"),
                 CallbackQueryHandler(user_answer_handler, pattern="^" + str(ADD_ANSWER) + "$"),
+                CallbackQueryHandler(search, pattern="^" + str(SEARCH) + "$"),
+                CallbackQueryHandler(set_question_rating, pattern="^" + str(BAD_QUESTION) + "$"),
+                CallbackQueryHandler(set_question_rating, pattern="^" + str(GOOD_QUESTION) + "$")
             ],
             USER_QUESTION: [
                 MessageHandler(
@@ -450,9 +510,17 @@ def main() -> None:
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND, user_answer
                 )
+            ],
+            TAGS: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, tags
+                )
+            ],
+            UPDATE_RATING: [
+                CallbackQueryHandler(question, pattern="^-?\d+(\.\d+)?$")
             ]
         },
-        fallbacks=[]
+        fallbacks=[CallbackQueryHandler(question, pattern="^-?\d+(\.\d+)?$")]
     )
 
     buy_item = ConversationHandler(
@@ -470,7 +538,7 @@ def main() -> None:
 
     changing_answer = ConversationHandler(
         entry_points=[CommandHandler("myanswers", get_my_answers),
-                      CommandHandler("myquestoins", get_my_questions)],
+                      CommandHandler("myquestions", get_my_questions)],
         states={
             CHANGING_ANSWER: [
                 CallbackQueryHandler(change_my_answer_handler, pattern="^-?\d+(\.\d+)?$")

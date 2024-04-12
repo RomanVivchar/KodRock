@@ -41,27 +41,22 @@ class Database:
             data = (phone, telegram_id,)
             return self.cursor.execute(query, data)
 
-    def add_question(self, telegram_id: int, question: str):
+    def add_question(self, telegram_id: int, question: str, tag: str):
         with self.connection:
-            return self.cursor.execute("INSERT INTO question (user_id, text, date) VALUES (%s, %s, %s)",
-                                       (telegram_id, question, datetime.datetime.now()))
-
-    def add_tags(self, telegram_id: int, tags: str):
-        with self.connection:
-            return self.cursor.execute("UPDATE question SET tag = (%s) WHERE user_id = (%s)",
-                                       (tags, telegram_id,))
+            return self.cursor.execute("INSERT INTO question (user_id, text, tag, date) VALUES (%s, %s, %s, %s)",
+                                       (telegram_id, question, tag, datetime.datetime.now()))
 
     def all_questions(self) -> list[tuple]:
         with self.connection:
-            self.cursor.execute("SELECT question_id, text, date, user_id "
-                                "FROM question ORDER BY date DESC")
+            self.cursor.execute("SELECT tag, question_id, text, rating "
+                                "FROM question ORDER BY rating DESC, date DESC")
             rows = self.cursor.fetchall()
 
             return rows
 
     def get_question(self, question_id: int) -> tuple:
         with self.connection:
-            self.cursor.execute("SELECT text, date, user_id "
+            self.cursor.execute("SELECT tag, text, date, user_id, rating "
                                 "FROM question WHERE question_id = (%s)", (question_id,))
             row = self.cursor.fetchone()
             return row
@@ -91,10 +86,10 @@ class Database:
 
     def all_answers(self, question_id: int) -> list[tuple]:
         with self.connection:
-            self.cursor.execute("SELECT answer_id, text, date, user_id "
+            self.cursor.execute("SELECT answer_id, text, date, user_id, rating "
                                 "FROM answer "
                                 "WHERE question_id = (%s)"
-                                "ORDER BY date DESC", (question_id,))
+                                "ORDER BY rating DESC, date DESC", (question_id,))
             rows = self.cursor.fetchall()
 
             return rows
@@ -114,8 +109,8 @@ class Database:
 
     def insert_gems(self, telegram_id: int, gems: int, quantity_gems=0):
         with self.connection:
-            return self.cursor.execute("UPDATE users SET gems = (%s) WHERE user_id = (%s)",
-                                       (gems + quantity_gems, telegram_id,))
+            return self.cursor.execute("UPDATE users SET gems = gems + (%s) WHERE user_id = (%s)",
+                                       (quantity_gems, telegram_id,))
 
     def get_gems(self, telegram_id: int):
         with self.connection:
@@ -157,3 +152,16 @@ class Database:
         with self.connection:
             return self.cursor.execute("UPDATE question SET text = (%s)  WHERE question_id = (%s)",
                                        (question, question_id,))
+
+    def search_by_tag(self, tag: str):
+        with self.connection:
+            self.cursor.execute("SELECT question_id, text, date, user_id FROM question WHERE tag = (%s)",
+                                (tag,))
+            rows = self.cursor.fetchall()
+            return rows
+
+    def set_question_rating(self, question_id: int, rating: int):
+        with self.connection:
+            return self.cursor.execute("UPDATE question SET rating = rating + (%s) WHERE question_id = (%s)",
+                                       (rating+1, question_id,))
+
