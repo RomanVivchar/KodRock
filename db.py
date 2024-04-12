@@ -46,10 +46,11 @@ class Database:
             return self.cursor.execute("INSERT INTO question (user_id, text, tag, date) VALUES (%s, %s, %s, %s)",
                                        (telegram_id, question, tag, datetime.datetime.now()))
 
-    def all_questions(self) -> list[tuple]:
+    def all_questions(self, state=True, decline=False) -> list[tuple]:
         with self.connection:
             self.cursor.execute("SELECT tag, question_id, text, rating "
-                                "FROM question ORDER BY rating DESC, date DESC")
+                                "FROM question WHERE is_sent = (%s) AND declined = (%s) "
+                                "ORDER BY rating DESC, date DESC", (state, decline,))
             rows = self.cursor.fetchall()
 
             return rows
@@ -70,9 +71,11 @@ class Database:
     def all_users(self) -> list[tuple]:
         with self.connection:
             self.cursor.execute("with count_questions as ("
-                                "SELECT user_id, COUNT(user_id) as total FROM question GROUP BY user_id), "
+                                "SELECT user_id, COUNT(user_id) as total FROM question WHERE declined is False "
+                                "GROUP BY user_id), "
                                 "count_answers as ("
-                                "SELECT user_id, COUNT(user_id) as total FROM answer GROUP BY user_id)"
+                                "SELECT user_id, COUNT(user_id) as total FROM answer WHERE declined is False "
+                                "GROUP BY user_id)"
                                 "SELECT last_name, name, phone_number, email, "
                                 "COALESCE(count_answers.total, 0) as answers, "
                                 "COALESCE(count_questions.total, 0) as questions "
@@ -84,12 +87,12 @@ class Database:
 
             return rows
 
-    def all_answers(self, question_id: int) -> list[tuple]:
+    def all_answers(self, question_id: int, state=True, decline=False) -> list[tuple]:
         with self.connection:
-            self.cursor.execute("SELECT answer_id, text, date, user_id, rating "
+            self.cursor.execute("SELECT answer_id, text, date, user_id "
                                 "FROM answer "
-                                "WHERE question_id = (%s)"
-                                "ORDER BY rating DESC, date DESC", (question_id,))
+                                "WHERE question_id = (%s) AND is_sent = (%s) AND declined = (%s) "
+                                "ORDER BY date DESC", (question_id, state, decline))
             rows = self.cursor.fetchall()
 
             return rows
@@ -101,13 +104,14 @@ class Database:
 
     def check_strike(self, telegram_id: int):
         with self.connection:
-            self.cursor.execute("SELECT COUNT(*) FROM answer WHERE date = (%s) AND user_id = (%s)",
+            self.cursor.execute("SELECT COUNT(*) FROM answer "
+                                "WHERE date = (%s) AND user_id = (%s) AND declined is False",
                                 (datetime.datetime.now().date(), telegram_id))
             row = self.cursor.fetchone()
 
             return row
 
-    def insert_gems(self, telegram_id: int, gems: int, quantity_gems=0):
+    def insert_gems(self, telegram_id: int, quantity_gems=0):
         with self.connection:
             return self.cursor.execute("UPDATE users SET gems = gems + (%s) WHERE user_id = (%s)",
                                        (quantity_gems, telegram_id,))
@@ -131,7 +135,7 @@ class Database:
         with self.connection:
             self.cursor.execute("SELECT answer_id, text, date, question_id "
                                 "FROM answer "
-                                "WHERE user_id = (%s) "
+                                "WHERE user_id = (%s) AND declined is false "
                                 "ORDER BY date DESC", (telegram_id,))
             rows = self.cursor.fetchall()
 
@@ -144,7 +148,8 @@ class Database:
 
     def my_questions(self, telegram_id: int):
         with self.connection:
-            self.cursor.execute("SELECT question_id, text, date FROM question WHERE user_id = (%s)", (telegram_id,))
+            self.cursor.execute("SELECT question_id, text, date FROM question "
+                                "WHERE user_id = (%s) AND declined is false", (telegram_id,))
             rows = self.cursor.fetchall()
             return rows
 
@@ -163,5 +168,28 @@ class Database:
     def set_question_rating(self, question_id: int, rating: int):
         with self.connection:
             return self.cursor.execute("UPDATE question SET rating = rating + (%s) WHERE question_id = (%s)",
-                                       (rating+1, question_id,))
+                                       (rating + 1, question_id,))
 
+    def check_admin(self, telegram_id: int):
+        with self.connection:
+            self.cursor.execute("SELECT COUNT(*) FROM admins WHERE user_id = (%s)", (telegram_id,))
+            row = self.cursor.fetchone()
+            return bool(len(row))
+
+    def check_entry_admin(self, telegram_id: int, login: str, password: str):
+        with self.connection:
+            self.cursor.execute("SELECT user_id FROM admins "
+                                "WHERE user_id = (%s) AND login = (%s) AND password = (%s)",
+                                (telegram_id, login, password,))
+            row = self.cursor.fetchone()
+            return bool(row)
+
+    def set_true_question(self, question_id: int, decline=False):
+        with self.connection:
+            return self.cursor.execute("UPDATE question SET is_sent = True, declined = (%s) WHERE question_id = (%s)",
+                                       (decline, question_id,))
+
+    def set_true_answer(self, answer_id: int, decline=False):
+        with self.connection:
+            return self.cursor.execute("UPDATE answer SET is_sent = True, declined = (%s) WHERE answer_id = (%s)",
+                                       (decline, answer_id,))

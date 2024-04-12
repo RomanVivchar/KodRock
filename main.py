@@ -20,7 +20,9 @@ filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBU
  ASK_QUESTION, VIEW_QUESTIONS, USER_QUESTION, USER_ANSWER, VIEW_ANSWERS,
  ADD_ANSWER, VIEWING_QUESTION, BUY_ITEM, BACK, ANSWER,
  QUESTION, CHANGING_ANSWER, CHANGING_QUESTION, TAGS, SEARCH,
- UPDATE_RATING, BAD_QUESTION, GOOD_QUESTION) = map(chr, range(28))
+ UPDATE_RATING, BAD_QUESTION, GOOD_QUESTION, LOGIN, PASSWORD,
+ ADMIN, REQUEST, DECISION_ANSWER, DECISION_QUESTION, CONTINUE_REVIEW,
+ ACCESS) = map(chr, range(36))
 
 db = Database("project", "bot", "bot123", "194.87.239.80", "5432")
 
@@ -293,7 +295,7 @@ async def view_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(rows) == 0:
         await bot.send_message(chat_id=update.effective_user.id, text='На этот вопрос пока нет ответов')
     for row in rows:
-        answer_id, text, date, user_id, rating = row
+        answer_id, text, date, user_id = row
         user_lastname, username = db.get_user(user_id)
         await bot.send_message(chat_id=update.effective_user.id,
                                text=f"Ответ от: {user_lastname} {username}\n\n"
@@ -386,7 +388,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup)
         return BACK
     else:
-        db.insert_gems(chat_id, gems, -int(query.data))
+        db.insert_gems(chat_id, -int(query.data))
         await bot.send_message(chat_id=update.effective_user.id, text=f"✅ Товар успешно куплен!\n"
                                                                       f"Ваш баланс: {db.get_gems(chat_id)[0]} 💎 gems")
 
@@ -452,6 +454,145 @@ async def change_my_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     db.update_question(text, question_id)
     await update.message.reply_text(text="Изменения сохранены")
     context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    keyboard = [[InlineKeyboardButton("Войти", callback_data=str(ADMIN))]]
+    await bot.send_message(chat_id, text="Раздел администратора", reply_markup=InlineKeyboardMarkup(keyboard))
+    return LOGIN
+
+
+async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+    if db.check_admin(chat_id) is False:
+        await bot.send_message(chat_id, "Вы не admin")
+        return ConversationHandler.END
+    await bot.send_message(chat_id, "Введите логин")
+    return PASSWORD
+
+
+async def password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['username'] = update.message.text
+    await update.message.reply_text("Введите пароль")
+    return ACCESS
+
+
+async def access(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    admin = True
+    chat_id = update.effective_user.id
+    if update.message is not None:
+        password = update.message.text
+        username = context.user_data.get('username')
+        admin = db.check_entry_admin(chat_id, username, password)
+    keyboard = [[InlineKeyboardButton("Просмотреть все вопросы", callback_data=str(VIEW_QUESTIONS)),
+                 InlineKeyboardButton("Просмотреть все ответы", callback_data=str(VIEW_ANSWERS))]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if not admin:
+        await update.message.reply_text("Неверный логин или пароль. Попробуйте снова: /admin")
+        return ADMIN
+    await bot.send_message(chat_id, "Добро пожаловать в раздел администратора! "
+                                    "Здесь вы можете просмотреть все запросы на знания", reply_markup=reply_markup)
+    return REQUEST
+
+
+async def review_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    if query.data == str(VIEW_QUESTIONS):
+        rows = db.all_questions(state=False, decline=True)
+        if len(rows) == 0:
+            keyboard = [
+                [InlineKeyboardButton("Вернуться назад", callback_data='Вернуться назад')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(text="Новых запросов на знание пока нет.", reply_markup=reply_markup)
+            return ACCESS
+        for row in rows:
+            tag, question_id, question_text, rating = row
+            db.set_true_question(question_id, True)
+            await bot.send_message(chat_id=chat_id,
+                                   text=f"❔ Вопрос: {question_text}\n"
+                                        f"🏷 #тег: {tag}\n"
+                                        f"📈 Рейтинг: {rating}\n"
+                                        f"QUESTION_ID: {question_id}")
+
+        await bot.send_message(chat_id=chat_id, text="Напишите через запятую id вопросов, которые следует принять, "
+                                                     "остальные будут отклонены. Если все следует отклонить, напишите 0")
+        return DECISION_QUESTION
+    else:
+        rows = db.all_questions(state=True, decline=False)
+        count_ans = False
+        for row in rows:
+            tag, question_id, question_text, rating = row
+            answers = db.all_answers(question_id=question_id, state=False, decline=True)
+            if len(answers) == 0:
+                continue
+            count_ans = True
+            await bot.send_message(chat_id=chat_id,
+                                   text=f"➖➖➖➖➖➖➖➖➖➖➖")
+            await bot.send_message(chat_id=chat_id,
+                                   text=f"❔ Вопрос: {question_text}\n\nОтветы:")
+            for answer in answers:
+                answer_id, text, date, user_id = answer
+                db.set_true_answer(answer_id, True)
+                await bot.send_message(chat_id=chat_id, text=f"{text}\nANSWER_ID: {answer_id}")
+        if count_ans:
+            await bot.send_message(chat_id=chat_id, text="Напишите через запятую id ответов, которые следует принять, "
+                                                         "остальные будут отклонены. Если все следует отклонить, "
+                                                         "напишите 0")
+            return DECISION_ANSWER
+        else:
+            keyboard = [
+                [InlineKeyboardButton("Вернуться назад", callback_data='Вернуться назад')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(text="Новых ответов пока нет.", reply_markup=reply_markup)
+            return ACCESS
+
+
+async def decision_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    accepted_questions = update.message.text.split(',')
+    chat_id = update.effective_chat.id
+    for accepted_question in accepted_questions:
+        db.set_true_question(int(accepted_question))
+
+    keyboard = [
+        [InlineKeyboardButton("Вернуться назад", callback_data='Вернуться назад')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await bot.send_message(chat_id=chat_id, text="Решение принято.", reply_markup=reply_markup)
+
+    return CONTINUE_REVIEW
+
+
+async def decision_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    accepted_answers = update.message.text.split(',')
+    chat_id = update.effective_chat.id
+    for accepted_answer in accepted_answers:
+        print(accepted_answer)
+        db.set_true_answer(int(accepted_answer))
+
+    keyboard = [
+        [InlineKeyboardButton("Вернуться назад", callback_data='Вернуться назад')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await bot.send_message(chat_id=chat_id, text="Решение принято.", reply_markup=reply_markup)
+
+    return CONTINUE_REVIEW
+
+async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    decision = update.callback_query.data
+    if decision == 'accept':
+        await update.callback_query.message.reply_text("new idea has been sent to all users.")
+    elif decision == 'decline':
+        user_id = update.callback_query.message.chat_id
+        await context.bot.send_message(chat_id=user_id, text="your idea request has been declined.")
+
     return ConversationHandler.END
 
 
@@ -556,6 +697,23 @@ def main() -> None:
         fallbacks=[]
     )
 
+    admin_panel = ConversationHandler(
+        entry_points=[CommandHandler("admin", admin)],
+        states={
+            LOGIN: [CallbackQueryHandler(login, pattern="^" + str(ADMIN) + "$")],
+            PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, password)],
+            ACCESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, access),
+                     CallbackQueryHandler(access, pattern="^" + "Вернуться назад" + "$")],
+            REQUEST: [CallbackQueryHandler(review_request, pattern="^" + str(VIEW_QUESTIONS) + "$"),
+                      CallbackQueryHandler(review_request, pattern="^" + str(VIEW_ANSWERS) + "$")],
+            DECISION_ANSWER: [MessageHandler(filters.TEXT & ~filters.COMMAND, decision_answers)],
+            DECISION_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, decision_questions)],
+            CONTINUE_REVIEW: [CallbackQueryHandler(access, pattern="^" + "Вернуться назад" + "$")]
+        },
+        fallbacks=[CommandHandler("admin", admin)]
+    )
+
+    app.add_handler(admin_panel)
     app.add_handler(user_registration)
     app.add_handler(welcome_message)
     app.add_handler(buy_item)
