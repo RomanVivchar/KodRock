@@ -1,6 +1,6 @@
 psycopg2~=2.9.9
 python-telegram-bot
-
+re~=2.2.1
 telegram~=0.0.1
 h11~=0.14.0
 jupyter~=1.0.0
