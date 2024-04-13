@@ -191,7 +191,7 @@ async def user_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def view_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     chat_id = update.effective_chat.id
@@ -662,7 +662,7 @@ def main() -> None:
         states={
             START_ROUTES: [
                 CallbackQueryHandler(ask_question_handler, pattern="^" + str(ASK_QUESTION) + "$"),
-                CallbackQueryHandler(all_questions, pattern="^" + str(VIEW_QUESTIONS) + "$"),
+                CallbackQueryHandler(view_all_questions, pattern="^" + str(VIEW_QUESTIONS) + "$"),
                 CallbackQueryHandler(question, pattern="^-?\d+(\.\d+)?$"),
                 CallbackQueryHandler(view_answers, pattern="^" + str(VIEW_ANSWERS) + "$"),
                 CallbackQueryHandler(user_answer_handler, pattern="^" + str(ADD_ANSWER) + "$"),
