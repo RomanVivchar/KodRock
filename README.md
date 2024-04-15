@@ -38,9 +38,13 @@
 База данных состоит из следующих таблиц: 
 
 users - columns: user_id, name, last_name, phone_number, email, gems(то есть баланс валюты)
+
 question - columns: question_id, tag, user_id, text, date, is_sent, declined, rating
+
 answer - columns: answer_id, text, user_id, date, question_id, is_sent, declined
+
 admins - columns: login, password, user_id
+
 
 
 Я думаю стоит отдельно поговорить о разделе администратора и для чего в БД столбцы is_sent, declined.
