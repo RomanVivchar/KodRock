@@ -45,6 +45,7 @@ answer - columns: answer_id, text, user_id, date, question_id, is_sent, declined
 
 admins - columns: login, password, user_id
 
+  
 
 
 Я думаю стоит отдельно поговорить о разделе администратора и для чего в БД столбцы is_sent, declined.
